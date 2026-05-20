@@ -1,0 +1,7 @@
+{
+  "teachers": {
+    "admin": "password123",
+    "teacher1": "secure_pass456",
+    "teacher2": "mypassword789"
+  }
+}

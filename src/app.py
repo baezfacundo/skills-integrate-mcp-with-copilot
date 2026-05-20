@@ -5,11 +5,13 @@ A super simple FastAPI application that allows students to view and sign up
 for extracurricular activities at Mergington High School.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Cookie
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 import os
 from pathlib import Path
+import json
+from datetime import datetime
 
 app = FastAPI(title="Mergington High School API",
               description="API for viewing and signing up for extracurricular activities")
@@ -18,6 +20,20 @@ app = FastAPI(title="Mergington High School API",
 current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
+
+# Load teacher credentials from JSON file
+def load_teachers():
+    try:
+        with open(os.path.join(Path(__file__).parent, "teachers.json"), "r") as f:
+            data = json.load(f)
+            return data.get("teachers", {})
+    except FileNotFoundError:
+        return {}
+
+teachers = load_teachers()
+
+# In-memory session storage (teacher username -> login status)
+logged_in_teachers = {}
 
 # In-memory activity database
 activities = {
@@ -83,20 +99,53 @@ def root():
     return RedirectResponse(url="/static/index.html")
 
 
+@app.post("/login")
+def login(username: str, password: str):
+    """Authenticate a teacher"""
+    if username in teachers and teachers[username] == password:
+        logged_in_teachers[username] = True
+        return {"message": f"Login successful", "username": username, "is_teacher": True}
+    raise HTTPException(status_code=401, detail="Invalid credentials")
+
+
+@app.post("/logout")
+def logout(username: str):
+    """Logout a teacher"""
+    if username in logged_in_teachers:
+        del logged_in_teachers[username]
+    return {"message": "Logged out successfully"}
+
+
+@app.get("/check-login")
+def check_login(username: str = None):
+    """Check if a user is logged in as a teacher"""
+    if username and username in logged_in_teachers:
+        return {"is_logged_in": True, "username": username, "is_teacher": True}
+    return {"is_logged_in": False}
+
+
 @app.get("/activities")
 def get_activities():
     return activities
 
 
 @app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
-    """Sign up a student for an activity"""
+def signup_for_activity(activity_name: str, email: str, teacher: str = None):
+    """Sign up a student for an activity (requires teacher login)"""
+    # Check if teacher is logged in
+    if not teacher or teacher not in logged_in_teachers:
+        raise HTTPException(status_code=403, detail="Only logged-in teachers can register students")
+
     # Validate activity exists
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
 
     # Get the specific activity
     activity = activities[activity_name]
+
+    # Check if at max capacity
+    if len(activity["participants"]) >= activity["max_participants"]:
+        raise HTTPException(status_code=400, detail="Activity is at max capacity")
 
     # Validate student is not already signed up
     if email in activity["participants"]:
@@ -110,9 +159,14 @@ def signup_for_activity(activity_name: str, email: str):
     return {"message": f"Signed up {email} for {activity_name}"}
 
 
+
 @app.delete("/activities/{activity_name}/unregister")
-def unregister_from_activity(activity_name: str, email: str):
-    """Unregister a student from an activity"""
+def unregister_from_activity(activity_name: str, email: str, teacher: str = None):
+    """Unregister a student from an activity (requires teacher login)"""
+    # Check if teacher is logged in
+    if not teacher or teacher not in logged_in_teachers:
+        raise HTTPException(status_code=403, detail="Only logged-in teachers can unregister students")
+
     # Validate activity exists
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
@@ -130,3 +184,4 @@ def unregister_from_activity(activity_name: str, email: str):
     # Remove student
     activity["participants"].remove(email)
     return {"message": f"Unregistered {email} from {activity_name}"}
+
